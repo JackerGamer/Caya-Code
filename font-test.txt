@@ -1,0 +1,47 @@
+Caya Code Font Test
+===================
+
+ABCDEFGHIJKLMNOPQRSTUVWXYZ
+abcdefghijklmnopqrstuvwxyz
+0123456789
+
+Programming ligatures
+---------------------
+->  -->  =>  ==>  <-  <--  <=  <==
+==  ===  !=  !==  >=  <=  &&  ||
+::  :::  :=  ++  +++  **  ***  //  /*  */
+<|  |>  <|>  <*  *>  </  />  #{  #(
+
+const greeting = (name) => `Hello, ${name}!`;
+if (version >= 2 && status != null) return true;
+for (let i = 0; i < 10; i++) console.log(i);
+
+中文测试
+--------
+天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。
+你好，世界！编程让想法落地。
+中文标点：，。！？；：“”‘’（）【】《》￥……——
+
+Width and alignment
+-------------------
+|1234567890123456789012345678901234567890|
+|English text                            |
+|中文每字占两格                          |
+|AB中文CD中文EF                          |
+|一二三四五六七八九十                    |
+
+Columns
+-------
+| Name       | Value      | Status     |
+| Cascadia   | Latin      | Ready      |
+| 微软雅黑   | 中文字形   | 正常       |
+| Caya Code  | 中英混排   | 对齐       |
+
+Similar characters
+------------------
+0 O o  1 I l i |  2 Z z  5 S s  8 B
+() [] {} <>  , . : ;  ' " `  - _ = +
+
+The quick brown fox jumps over the lazy dog.
+Sphinx of black quartz, judge my vow.
+Pack my box with five dozen liquor jugs.
