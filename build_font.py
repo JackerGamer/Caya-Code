@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shutil
 import tempfile
 import unicodedata
 import winreg
@@ -13,7 +15,14 @@ from fontTools.merge import Merger
 from fontTools.ttLib import TTCollection, TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
-from font_config import CASCADE_FONT_NAME, DEFAULT_FAMILY, STYLES, Style, safe_filename
+from font_config import (
+    CASCADE_FONT_NAME,
+    DEFAULT_FAMILY,
+    DEFAULT_VERSION,
+    STYLES,
+    Style,
+    safe_filename,
+)
 
 
 def environment_path(name: str) -> Path:
@@ -37,6 +46,14 @@ class FontSource:
     name: str
 
 
+def font_version(value: str) -> str:
+    if not re.fullmatch(r"\d+\.\d+", value):
+        raise argparse.ArgumentTypeError("version must use the form 1.000")
+    if any(int(part) >= 65_535 for part in value.split(".")):
+        raise argparse.ArgumentTypeError("version numbers must be less than 65535")
+    return value
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build Caya Code."
@@ -45,7 +62,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=Path("build"))
     parser.add_argument(
         "--version",
-        help="Font version; defaults to build time",
+        type=font_version,
+        default=DEFAULT_VERSION,
+        help=f"Font version (default: {DEFAULT_VERSION})",
     )
     return parser.parse_args()
 
@@ -107,7 +126,13 @@ def font_names(font: TTFont, name_ids: tuple[int, ...]) -> set[str]:
     return values
 
 
-def rename_font(font: TTFont, family: str, style: Style, version: str) -> None:
+def rename_font(
+    font: TTFont,
+    family: str,
+    style: Style,
+    version: str,
+    build_id: str,
+) -> None:
     ps_family = safe_filename(family)
     is_legacy_linked_style = style.name in {"Regular", "Bold"}
     legacy_family = family if is_legacy_linked_style else f"{family} {style.name}"
@@ -118,7 +143,7 @@ def rename_font(font: TTFont, family: str, style: Style, version: str) -> None:
     set_name(font, 0, "Cascadia Code © Microsoft; Microsoft YaHei © Microsoft/Founder.")
     set_name(font, 1, legacy_family)
     set_name(font, 2, legacy_style)
-    set_name(font, 3, f"{family}; {style.name}; {version}")
+    set_name(font, 3, f"{family}; {style.name}; {build_id}")
     set_name(font, 4, full_name)
     set_name(font, 5, f"Version {version}")
     set_name(font, 6, postscript_name)
@@ -230,8 +255,14 @@ def make_cjk_double_width(font: TTFont, latin_codepoints: set[int]) -> tuple[int
     return cell_width, changed
 
 
-def normalize_metadata(font: TTFont, family: str, style: Style, version: str) -> None:
-    rename_font(font, family, style, version)
+def normalize_metadata(
+    font: TTFont,
+    family: str,
+    style: Style,
+    version: str,
+    build_id: str,
+) -> None:
+    rename_font(font, family, style, version, build_id)
     font["OS/2"].usWeightClass = style.weight
     font["OS/2"].xAvgCharWidth = font["hmtx"].metrics[font.getBestCmap()[ord("0")]][0]
     font["OS/2"].panose.bProportion = 9
@@ -255,6 +286,7 @@ def build_style(
     family: str,
     style: Style,
     version: str,
+    build_id: str,
 ) -> None:
     with tempfile.TemporaryDirectory(
         prefix=".caya-code-",
@@ -277,14 +309,20 @@ def build_style(
         merged = Merger().merge([str(latin_path), str(cjk_path)])
         try:
             cell_width, changed = make_cjk_double_width(merged, latin_codepoints)
-            normalize_metadata(merged, family, style, version)
+            normalize_metadata(merged, family, style, version, build_id)
             temporary_output = temp / output_path.name
             merged.save(temporary_output, reorderTables=True)
             glyph_count = len(merged.getGlyphOrder())
         finally:
             merged.close()
 
-        temporary_output.replace(output_path)
+        staged_output = output_path.with_suffix(f"{output_path.suffix}.new")
+        try:
+            staged_output.unlink(missing_ok=True)
+            shutil.copyfile(temporary_output, staged_output)
+            staged_output.replace(output_path)
+        finally:
+            staged_output.unlink(missing_ok=True)
 
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(
@@ -295,7 +333,7 @@ def build_style(
 
 def main() -> None:
     args = parse_args()
-    version = args.version or datetime.now(timezone.utc).strftime("%Y%m%d.%H%M%SZ")
+    build_id = datetime.now(timezone.utc).strftime("%Y%m%d.%H%M%SZ")
     cascadia_path = registered_font_path(CASCADE_FONT_NAME)
     minimum_weight, maximum_weight = cascadia_weight_range(cascadia_path)
     yahei_sources: dict[str, FontSource] = {}
@@ -320,7 +358,7 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"Using {CASCADE_FONT_NAME}: {cascadia_path}")
-    print(f"Build version: {version}")
+    print(f"Font version: {args.version}; build: {build_id}")
     for style in STYLES:
         source = yahei_sources.get(style.name)
         if source:
@@ -343,7 +381,8 @@ def main() -> None:
             output_dir / f"{ps_family}-{style.name}.ttf",
             args.family,
             style,
-            version,
+            args.version,
+            build_id,
         )
 
 

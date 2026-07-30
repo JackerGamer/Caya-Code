@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 
 DEFAULT_FAMILY = "Caya Code"
+DEFAULT_VERSION = "1.000"
 CASCADE_FONT_NAME = "Cascadia Code Regular"
 
 

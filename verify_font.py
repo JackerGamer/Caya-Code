@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fontTools.ttLib import TTFont
 
-from font_config import DEFAULT_FAMILY, STYLES, safe_filename
+from font_config import DEFAULT_FAMILY, DEFAULT_VERSION, STYLES, safe_filename
 
 
 SAMPLES = "A0=>!=中文，。￥あ"
@@ -15,7 +15,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--family", default=DEFAULT_FAMILY)
     parser.add_argument("--output", type=Path, default=Path("build"))
-    parser.add_argument("--version")
+    parser.add_argument("--version", default=DEFAULT_VERSION)
     return parser.parse_args()
 
 
