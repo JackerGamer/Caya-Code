@@ -1,20 +1,21 @@
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
-$VenvPython = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$PythonCommand = Get-Command python -ErrorAction SilentlyContinue
 
-if (-not (Test-Path -LiteralPath $VenvPython)) {
-    python -m venv (Join-Path $ProjectRoot ".venv")
+if (-not $PythonCommand) {
+    throw "Python is not available on PATH."
 }
 
-& $VenvPython -c "import fontTools" 2>$null
+& $PythonCommand.Source -c "import fontTools"
 if ($LASTEXITCODE -ne 0) {
-    & $VenvPython -m pip install -r (Join-Path $ProjectRoot "requirements.txt")
+    throw "FontTools is not installed. Run: python -m pip install --upgrade fonttools"
 }
 
-& $VenvPython (Join-Path $ProjectRoot "build_font.py") @args
+& $PythonCommand.Source (Join-Path $ProjectRoot "build_font.py") @args
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
 
-& $VenvPython (Join-Path $ProjectRoot "verify_font.py") @args
+& $PythonCommand.Source (Join-Path $ProjectRoot "verify_font.py") @args
+exit $LASTEXITCODE
