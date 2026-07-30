@@ -102,6 +102,10 @@ def verify(
             english_name(font, 17) == expected_style,
             f"{path.name}: wrong typographic style",
         )
+        require(
+            not any(record.nameID == 13 for record in font["name"].names),
+            f"{path.name}: unexpected description metadata",
+        )
         if expected_version:
             require(
                 english_name(font, 5) == f"Version {expected_version}",

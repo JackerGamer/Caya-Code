@@ -39,13 +39,13 @@ class FontSource:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Build a personal-use programming font from Cascadia Code and Microsoft YaHei."
+        description="Build Caya Code."
     )
-    parser.add_argument("--family", default=DEFAULT_FAMILY, help="Output font family name")
+    parser.add_argument("--family", default=DEFAULT_FAMILY, help="Font family name")
     parser.add_argument("--output", type=Path, default=Path("build"))
     parser.add_argument(
         "--version",
-        help="Font version; defaults to the current UTC build timestamp",
+        help="Font version; defaults to build time",
     )
     return parser.parse_args()
 
@@ -118,15 +118,11 @@ def rename_font(font: TTFont, family: str, style: Style, version: str) -> None:
     set_name(font, 0, "Cascadia Code © Microsoft; Microsoft YaHei © Microsoft/Founder.")
     set_name(font, 1, legacy_family)
     set_name(font, 2, legacy_style)
-    set_name(font, 3, f"{family}; {style.name}; {version}; personal build")
+    set_name(font, 3, f"{family}; {style.name}; {version}")
     set_name(font, 4, full_name)
     set_name(font, 5, f"Version {version}")
     set_name(font, 6, postscript_name)
-    set_name(
-        font,
-        13,
-        "Personal-use local build. Do not redistribute without the required font licenses.",
-    )
+    font["name"].removeNames(nameID=13)
     set_name(font, 16, family)
     set_name(font, 17, style.name)
 
