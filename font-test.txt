@@ -20,6 +20,7 @@ for (let i = 0; i < 10; i++) console.log(i);
 --------
 天地玄黄，宇宙洪荒。日月盈昃，辰宿列张。
 你好，世界！编程让想法落地。
+拼音测试：nǐ hǎo，Zhōngwén biānpái。
 中文标点：，。！？；：“”‘’（）【】《》￥……——
 
 Width and alignment

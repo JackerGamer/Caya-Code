@@ -27,17 +27,13 @@ winget install --exact --id Python.Python.3.14
 python -m pip install --upgrade fonttools
 ```
 
-运行构建脚本，字体会输出到 `build/`：
+运行构建脚本，字体会输出到项目的 `build/`。Regular 是必需字重，其他字重会根据两种源字体共同支持的范围自动生成：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1
+python .\build_font.py
 ```
 
-如需自定义字体名称：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\build.ps1 --family "My Code Font"
-```
+发布新版本时修改 [`font_config.py`](font_config.py) 中的 `VERSION`。
 
 ## 安装与编辑器设置
 

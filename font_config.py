@@ -1,11 +1,13 @@
-from __future__ import annotations
-
 from dataclasses import dataclass
+from pathlib import Path
 
 
-DEFAULT_FAMILY = "Caya Code"
-DEFAULT_VERSION = "1.000"
-CASCADE_FONT_NAME = "Cascadia Code Regular"
+PROJECT_ROOT = Path(__file__).resolve().parent
+OUTPUT_DIR = PROJECT_ROOT / "build"
+FAMILY = "Caya Code"
+POSTSCRIPT_FAMILY = "CayaCode"
+VERSION = "1.001"
+CASCADIA_FONT_NAME = "Cascadia Code Regular"
 
 
 @dataclass(frozen=True)
@@ -21,9 +23,4 @@ STYLES = (
     Style("Regular", 400, "Microsoft YaHei"),
     Style("SemiBold", 600, "Microsoft YaHei Semibold"),
     Style("Bold", 700, "Microsoft YaHei Bold"),
-    Style("Heavy", 900, "Microsoft YaHei Heavy"),
 )
-
-
-def safe_filename(value: str) -> str:
-    return "".join(ch for ch in value if ch.isascii() and ch.isalnum()) or "CayaCode"

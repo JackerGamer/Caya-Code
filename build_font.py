@@ -1,14 +1,7 @@
-from __future__ import annotations
-
-import argparse
 import os
-import re
-import shutil
 import tempfile
 import unicodedata
 import winreg
-from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fontTools.merge import Merger
@@ -16,13 +9,15 @@ from fontTools.ttLib import TTCollection, TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
 from font_config import (
-    CASCADE_FONT_NAME,
-    DEFAULT_FAMILY,
-    DEFAULT_VERSION,
+    CASCADIA_FONT_NAME,
+    FAMILY,
+    OUTPUT_DIR,
+    POSTSCRIPT_FAMILY,
     STYLES,
+    VERSION,
     Style,
-    safe_filename,
 )
+from verify_font import verify_outputs
 
 
 def environment_path(name: str) -> Path:
@@ -38,35 +33,6 @@ FONT_REGISTRY_LOCATIONS = (
     (winreg.HKEY_CURRENT_USER, environment_path("LOCALAPPDATA") / "Microsoft/Windows/Fonts"),
     (winreg.HKEY_LOCAL_MACHINE, WINDOWS_FONTS),
 )
-
-
-@dataclass(frozen=True)
-class FontSource:
-    path: Path
-    name: str
-
-
-def font_version(value: str) -> str:
-    if not re.fullmatch(r"\d+\.\d+", value):
-        raise argparse.ArgumentTypeError("version must use the form 1.000")
-    if any(int(part) >= 65_535 for part in value.split(".")):
-        raise argparse.ArgumentTypeError("version numbers must be less than 65535")
-    return value
-
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build Caya Code."
-    )
-    parser.add_argument("--family", default=DEFAULT_FAMILY, help="Font family name")
-    parser.add_argument("--output", type=Path, default=Path("build"))
-    parser.add_argument(
-        "--version",
-        type=font_version,
-        default=DEFAULT_VERSION,
-        help=f"Font version (default: {DEFAULT_VERSION})",
-    )
-    return parser.parse_args()
 
 
 def set_name(font: TTFont, name_id: int, value: str) -> None:
@@ -126,29 +92,22 @@ def font_names(font: TTFont, name_ids: tuple[int, ...]) -> set[str]:
     return values
 
 
-def rename_font(
-    font: TTFont,
-    family: str,
-    style: Style,
-    version: str,
-    build_id: str,
-) -> None:
-    ps_family = safe_filename(family)
+def rename_font(font: TTFont, style: Style) -> None:
     is_legacy_linked_style = style.name in {"Regular", "Bold"}
-    legacy_family = family if is_legacy_linked_style else f"{family} {style.name}"
+    legacy_family = FAMILY if is_legacy_linked_style else f"{FAMILY} {style.name}"
     legacy_style = style.name if is_legacy_linked_style else "Regular"
-    full_name = family if style.name == "Regular" else f"{family} {style.name}"
-    postscript_name = f"{ps_family}-{style.name}"
+    full_name = FAMILY if style.name == "Regular" else f"{FAMILY} {style.name}"
+    postscript_name = f"{POSTSCRIPT_FAMILY}-{style.name}"
 
     set_name(font, 0, "Cascadia Code © Microsoft; Microsoft YaHei © Microsoft/Founder.")
     set_name(font, 1, legacy_family)
     set_name(font, 2, legacy_style)
-    set_name(font, 3, f"{family}; {style.name}; {build_id}")
+    set_name(font, 3, f"{FAMILY}; {style.name}; {VERSION}")
     set_name(font, 4, full_name)
-    set_name(font, 5, f"Version {version}")
+    set_name(font, 5, f"Version {VERSION}")
     set_name(font, 6, postscript_name)
     font["name"].removeNames(nameID=13)
-    set_name(font, 16, family)
+    set_name(font, 16, FAMILY)
     set_name(font, 17, style.name)
 
 
@@ -224,13 +183,16 @@ def translate_glyph(font: TTFont, glyph_name: str, dx: int) -> None:
     glyph.recalcBounds(glyf)
 
 
-def make_cjk_double_width(font: TTFont, latin_codepoints: set[int]) -> tuple[int, int]:
+def normalize_fallback_widths(
+    font: TTFont,
+    latin_codepoints: set[int],
+    latin_glyphs: set[str],
+) -> tuple[int, int]:
     cmap = font.getBestCmap()
     zero_name = cmap.get(ord("0"))
     if not zero_name:
         raise RuntimeError("Cascadia Code digit zero is missing")
     cell_width = font["hmtx"].metrics[zero_name][0]
-    target_width = cell_width * 2
 
     glyph_codepoints: dict[str, set[int]] = {}
     for codepoint, glyph_name in cmap.items():
@@ -238,10 +200,24 @@ def make_cjk_double_width(font: TTFont, latin_codepoints: set[int]) -> tuple[int
             glyph_codepoints.setdefault(glyph_name, set()).add(codepoint)
 
     changed = 0
-    for glyph_name, codepoints in glyph_codepoints.items():
-        if not any(unicodedata.east_asian_width(chr(cp)) in {"W", "F"} for cp in codepoints):
+    for glyph_name, (old_width, old_lsb) in font["hmtx"].metrics.items():
+        if glyph_name in latin_glyphs or old_width == 0:
             continue
-        old_width, old_lsb = font["hmtx"].metrics[glyph_name]
+        codepoints = glyph_codepoints.get(glyph_name, set())
+        if codepoints:
+            target_width = (
+                cell_width * 2
+                if any(
+                    unicodedata.east_asian_width(chr(codepoint)) in {"W", "F"}
+                    for codepoint in codepoints
+                )
+                else cell_width
+            )
+        else:
+            target_width = min(
+                (cell_width, cell_width * 2),
+                key=lambda width: abs(width - old_width),
+            )
         if old_width == target_width:
             continue
         dx = round((target_width - old_width) / 2)
@@ -255,24 +231,24 @@ def make_cjk_double_width(font: TTFont, latin_codepoints: set[int]) -> tuple[int
     return cell_width, changed
 
 
-def normalize_metadata(
-    font: TTFont,
-    family: str,
-    style: Style,
-    version: str,
-    build_id: str,
-) -> None:
-    rename_font(font, family, style, version, build_id)
+def normalize_metadata(font: TTFont, style: Style) -> None:
+    rename_font(font, style)
+    font["head"].fontRevision = float(VERSION)
     font["OS/2"].usWeightClass = style.weight
     font["OS/2"].xAvgCharWidth = font["hmtx"].metrics[font.getBestCmap()[ord("0")]][0]
     font["OS/2"].panose.bProportion = 9
     font["post"].isFixedPitch = 1
 
     bold = style.name == "Bold"
-    font["head"].macStyle = (font["head"].macStyle | 1) if bold else (font["head"].macStyle & ~1)
-    # fsSelection: clear italic/bold/regular, then set the appropriate style bit.
+    font["head"].macStyle = (
+        (font["head"].macStyle | 1)
+        if bold
+        else (font["head"].macStyle & ~1)
+    )
+    # fsSelection: clear italic/bold/regular, set the style, and use typo metrics.
     font["OS/2"].fsSelection &= ~((1 << 0) | (1 << 5) | (1 << 6))
     font["OS/2"].fsSelection |= (1 << 5) if bold else (1 << 6)
+    font["OS/2"].fsSelection |= 1 << 7
 
     for tag in ("DSIG", "STAT"):
         if tag in font:
@@ -281,12 +257,9 @@ def normalize_metadata(
 
 def build_style(
     cascadia_path: Path,
-    yahei_source: FontSource,
+    yahei_path: Path,
     output_path: Path,
-    family: str,
     style: Style,
-    version: str,
-    build_id: str,
 ) -> None:
     with tempfile.TemporaryDirectory(
         prefix=".caya-code-",
@@ -298,45 +271,75 @@ def build_style(
 
         instantiate_cascadia(cascadia_path, style.weight, latin_path)
         extract_yahei(
-            yahei_source.path,
+            yahei_path,
             cjk_path,
             "Microsoft YaHei",
         )
 
         with TTFont(latin_path, lazy=True) as latin:
             latin_codepoints = set(latin.getBestCmap())
+            latin_glyphs = set(latin.getGlyphOrder())
 
         merged = Merger().merge([str(latin_path), str(cjk_path)])
         try:
-            cell_width, changed = make_cjk_double_width(merged, latin_codepoints)
-            normalize_metadata(merged, family, style, version, build_id)
-            temporary_output = temp / output_path.name
-            merged.save(temporary_output, reorderTables=True)
+            cell_width, changed = normalize_fallback_widths(
+                merged,
+                latin_codepoints,
+                latin_glyphs,
+            )
+            normalize_metadata(merged, style)
+            merged.save(output_path, reorderTables=True)
             glyph_count = len(merged.getGlyphOrder())
         finally:
             merged.close()
 
-        staged_output = output_path.with_suffix(f"{output_path.suffix}.new")
-        try:
-            staged_output.unlink(missing_ok=True)
-            shutil.copyfile(temporary_output, staged_output)
-            staged_output.replace(output_path)
-        finally:
-            staged_output.unlink(missing_ok=True)
-
     size_mb = output_path.stat().st_size / (1024 * 1024)
     print(
         f"Built {output_path.name}: {glyph_count} glyphs, "
-        f"{changed} double-width glyphs, cell={cell_width}, {size_mb:.1f} MiB"
+        f"{changed} normalized glyphs, cell={cell_width}, {size_mb:.1f} MiB"
     )
 
 
+def normalize_family_metrics(outputs: list[tuple[Path, Style]]) -> None:
+    regular_path = next(path for path, style in outputs if style.name == "Regular")
+    with TTFont(regular_path, lazy=True) as regular:
+        hhea = regular["hhea"]
+        os2 = regular["OS/2"]
+        reference_hhea = (hhea.ascent, hhea.descent, hhea.lineGap)
+        reference_typo = (
+            os2.sTypoAscender,
+            os2.sTypoDescender,
+            os2.sTypoLineGap,
+        )
+
+    win_metrics: list[tuple[int, int]] = []
+    for path, _ in outputs:
+        with TTFont(path, lazy=True) as font:
+            win_metrics.append((font["OS/2"].usWinAscent, font["OS/2"].usWinDescent))
+    win_ascent = max(ascent for ascent, _ in win_metrics)
+    win_descent = max(descent for _, descent in win_metrics)
+
+    for path, _ in outputs:
+        normalized_path = path.with_suffix(".normalized.ttf")
+        with TTFont(path) as font:
+            hhea = font["hhea"]
+            os2 = font["OS/2"]
+            hhea.ascent, hhea.descent, hhea.lineGap = reference_hhea
+            (
+                os2.sTypoAscender,
+                os2.sTypoDescender,
+                os2.sTypoLineGap,
+            ) = reference_typo
+            os2.usWinAscent = win_ascent
+            os2.usWinDescent = win_descent
+            font.save(normalized_path, reorderTables=True)
+        normalized_path.replace(path)
+
+
 def main() -> None:
-    args = parse_args()
-    build_id = datetime.now(timezone.utc).strftime("%Y%m%d.%H%M%SZ")
-    cascadia_path = registered_font_path(CASCADE_FONT_NAME)
+    cascadia_path = registered_font_path(CASCADIA_FONT_NAME)
     minimum_weight, maximum_weight = cascadia_weight_range(cascadia_path)
-    yahei_sources: dict[str, FontSource] = {}
+    yahei_sources: dict[str, Path] = {}
     for style in STYLES:
         if not minimum_weight <= style.weight <= maximum_weight:
             print(
@@ -349,41 +352,44 @@ def main() -> None:
         except FileNotFoundError:
             print(f"Skipping {style.name}: {style.yahei_name} is not installed")
             continue
-        yahei_sources[style.name] = FontSource(path, style.yahei_name)
+        yahei_sources[style.name] = path
 
-    if not yahei_sources:
-        raise RuntimeError("No matching Cascadia Code and Microsoft YaHei weights found")
+    if "Regular" not in yahei_sources:
+        raise RuntimeError("Microsoft YaHei Regular is required")
 
-    output_dir = args.output.resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    print(f"Using {CASCADE_FONT_NAME}: {cascadia_path}")
-    print(f"Font version: {args.version}; build: {build_id}")
+    print(f"Using {CASCADIA_FONT_NAME}: {cascadia_path}")
+    print(f"Font version: {VERSION}")
     for style in STYLES:
-        source = yahei_sources.get(style.name)
-        if source:
-            print(f"Using {source.name}: {source.path}")
+        if style.name in yahei_sources:
+            print(f"Using {style.yahei_name}: {yahei_sources[style.name]}")
 
-    ps_family = safe_filename(args.family)
-    for style in STYLES:
-        if style.name not in yahei_sources:
-            stale_path = output_dir / f"{ps_family}-{style.name}.ttf"
-            if stale_path.is_file():
-                stale_path.unlink()
-                print(f"Removed stale output: {stale_path.name}")
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=".caya-code-build-",
+        dir=OUTPUT_DIR.parent,
+    ) as staging:
+        staging_dir = Path(staging)
+        staged_outputs: list[tuple[Path, Style]] = []
+        for style in STYLES:
+            if style.name not in yahei_sources:
+                continue
+            staged_path = staging_dir / f"{POSTSCRIPT_FAMILY}-{style.name}.ttf"
+            build_style(cascadia_path, yahei_sources[style.name], staged_path, style)
+            staged_outputs.append((staged_path, style))
 
-    for style in STYLES:
-        if style.name not in yahei_sources:
-            continue
-        build_style(
-            cascadia_path,
-            yahei_sources[style.name],
-            output_dir / f"{ps_family}-{style.name}.ttf",
-            args.family,
-            style,
-            args.version,
-            build_id,
-        )
+        normalize_family_metrics(staged_outputs)
+        verify_outputs(staged_outputs)
+
+        for staged_path, _ in staged_outputs:
+            staged_path.replace(OUTPUT_DIR / staged_path.name)
+
+    built_names = {path.name for path, _ in staged_outputs}
+    for stale_path in OUTPUT_DIR.glob(f"{POSTSCRIPT_FAMILY}-*.ttf"):
+        if stale_path.name not in built_names:
+            stale_path.unlink()
+            print(f"Removed stale output: {stale_path.name}")
+
+    print(f"Published {len(staged_outputs)} fonts to {OUTPUT_DIR}")
 
 
 if __name__ == "__main__":
