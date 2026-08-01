@@ -16,7 +16,7 @@ Caya Code 是一款等宽字体，专注于优化中文用户的编程体验。�
 
 ## 下载
 
-从 [Releases](https://github.com/JackerGamer/Cascadia-YaHei/releases/latest) 下载最新的 TTF 文件。
+从 [Releases](https://github.com/JackerGamer/Caya-Code/releases/latest) 下载最新的 TTF 文件。
 
 ## 构建
 
