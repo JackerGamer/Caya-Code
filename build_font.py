@@ -1,7 +1,6 @@
 import os
 import tempfile
 import unicodedata
-import winreg
 from pathlib import Path
 
 from fontTools.merge import Merger
@@ -9,6 +8,7 @@ from fontTools.ttLib import TTCollection, TTFont
 from fontTools.varLib.instancer import instantiateVariableFont
 
 from font_config import (
+    CASCADIA_FONT_FILE,
     CASCADIA_FONT_NAME,
     FAMILY,
     OUTPUT_DIR,
@@ -28,10 +28,9 @@ def environment_path(name: str) -> Path:
 
 
 WINDOWS_FONTS = environment_path("WINDIR") / "Fonts"
-FONT_REGISTRY_KEY = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
-FONT_REGISTRY_LOCATIONS = (
-    (winreg.HKEY_CURRENT_USER, environment_path("LOCALAPPDATA") / "Microsoft/Windows/Fonts"),
-    (winreg.HKEY_LOCAL_MACHINE, WINDOWS_FONTS),
+FONT_DIRECTORIES = (
+    environment_path("LOCALAPPDATA") / "Microsoft/Windows/Fonts",
+    WINDOWS_FONTS,
 )
 
 
@@ -42,43 +41,13 @@ def set_name(font: TTFont, name_id: int, value: str) -> None:
     name.setName(value, name_id, 0, 3, 0)
 
 
-def registered_font_path(font_name: str) -> Path:
-    target = font_name.casefold()
-    missing_paths: list[Path] = []
-
-    for hive, relative_base in FONT_REGISTRY_LOCATIONS:
-        try:
-            key = winreg.OpenKey(hive, FONT_REGISTRY_KEY)
-        except FileNotFoundError:
-            continue
-
-        with key:
-            index = 0
-            while True:
-                try:
-                    value_name, value, _ = winreg.EnumValue(key, index)
-                except OSError:
-                    break
-                index += 1
-
-                display_name = value_name
-                if display_name.casefold().endswith(" (truetype)"):
-                    display_name = display_name[: -len(" (TrueType)")]
-                aliases = {alias.strip().casefold() for alias in display_name.split(" & ")}
-                if target not in aliases:
-                    continue
-
-                path = Path(os.path.expandvars(str(value)))
-                if not path.is_absolute():
-                    path = relative_base / path
-                if path.is_file():
-                    return path.resolve()
-                missing_paths.append(path)
-
-    details = ""
-    if missing_paths:
-        details = "\nRegistered paths not found:\n" + "\n".join(map(str, missing_paths))
-    raise FileNotFoundError(f"Installed font not found: {font_name}{details}")
+def installed_font_path(filename: str) -> Path:
+    candidates = [directory / filename for directory in FONT_DIRECTORIES]
+    for path in candidates:
+        if path.is_file():
+            return path.resolve()
+    checked = "\n".join(map(str, candidates))
+    raise FileNotFoundError(f"Installed font file not found: {filename}\nChecked:\n{checked}")
 
 
 def font_names(font: TTFont, name_ids: tuple[int, ...]) -> set[str]:
@@ -160,6 +129,8 @@ def instantiate_cascadia(source: Path, weight: int, destination: Path) -> None:
 
 def cascadia_weight_range(source: Path) -> tuple[int, int]:
     with TTFont(source, lazy=True) as font:
+        if CASCADIA_FONT_NAME not in font_names(font, (1, 16)):
+            raise RuntimeError(f"Expected {CASCADIA_FONT_NAME} in {source}")
         if "fvar" not in font:
             weight = font["OS/2"].usWeightClass
             return weight, weight
@@ -337,7 +308,7 @@ def normalize_family_metrics(outputs: list[tuple[Path, Style]]) -> None:
 
 
 def main() -> None:
-    cascadia_path = registered_font_path(CASCADIA_FONT_NAME)
+    cascadia_path = installed_font_path(CASCADIA_FONT_FILE)
     minimum_weight, maximum_weight = cascadia_weight_range(cascadia_path)
     yahei_sources: dict[str, Path] = {}
     for style in STYLES:
@@ -348,20 +319,26 @@ def main() -> None:
             )
             continue
         try:
-            path = registered_font_path(style.yahei_name)
+            path = installed_font_path(style.yahei_file)
         except FileNotFoundError:
-            print(f"Skipping {style.name}: {style.yahei_name} is not installed")
+            print(
+                f"Skipping {style.name}: {style.yahei_name} "
+                f"({style.yahei_file}) is not installed"
+            )
             continue
         yahei_sources[style.name] = path
 
     if "Regular" not in yahei_sources:
         raise RuntimeError("Microsoft YaHei Regular is required")
 
-    print(f"Using {CASCADIA_FONT_NAME}: {cascadia_path}")
+    print(f"Using {CASCADIA_FONT_NAME} ({CASCADIA_FONT_FILE}): {cascadia_path}")
     print(f"Font version: {VERSION}")
     for style in STYLES:
         if style.name in yahei_sources:
-            print(f"Using {style.yahei_name}: {yahei_sources[style.name]}")
+            print(
+                f"Using {style.yahei_name} ({style.yahei_file}): "
+                f"{yahei_sources[style.name]}"
+            )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(
