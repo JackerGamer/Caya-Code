@@ -211,15 +211,23 @@ def normalize_metadata(font: TTFont, style: Style) -> None:
     font["post"].isFixedPitch = 1
 
     bold = style.name == "Bold"
+    regular = style.name == "Regular"
     font["head"].macStyle = (
         (font["head"].macStyle | 1)
         if bold
         else (font["head"].macStyle & ~1)
     )
-    # fsSelection: clear italic/bold/regular, set the style, and use typo metrics.
-    font["OS/2"].fsSelection &= ~((1 << 0) | (1 << 5) | (1 << 6))
-    font["OS/2"].fsSelection |= (1 << 5) if bold else (1 << 6)
-    font["OS/2"].fsSelection |= 1 << 7
+    # fsSelection: clear italic/bold/regular/WWS, then set the actual style.
+    # Every face differs only by weight, so the typographic names form a WWS
+    # family even though legacy applications may expose extra weights separately.
+    font["OS/2"].fsSelection &= ~(
+        (1 << 0) | (1 << 5) | (1 << 6) | (1 << 8)
+    )
+    if bold:
+        font["OS/2"].fsSelection |= 1 << 5
+    elif regular:
+        font["OS/2"].fsSelection |= 1 << 6
+    font["OS/2"].fsSelection |= (1 << 7) | (1 << 8)
 
     for tag in ("DSIG", "STAT"):
         if tag in font:

@@ -147,6 +147,7 @@ def verify(path: Path, style: Style) -> None:
         )
 
         bold = style.name == "Bold"
+        regular = style.name == "Regular"
         require(
             bool(font["head"].macStyle & 1) == bold,
             f"{path.name}: wrong macStyle",
@@ -156,8 +157,16 @@ def verify(path: Path, style: Style) -> None:
             f"{path.name}: wrong fsSelection bold bit",
         )
         require(
+            bool(font["OS/2"].fsSelection & (1 << 6)) == regular,
+            f"{path.name}: wrong fsSelection regular bit",
+        )
+        require(
             bool(font["OS/2"].fsSelection & (1 << 7)),
             f"{path.name}: USE_TYPO_METRICS is not set",
+        )
+        require(
+            bool(font["OS/2"].fsSelection & (1 << 8)),
+            f"{path.name}: WWS is not set",
         )
         require(
             not bool(font["OS/2"].fsSelection & (1 << 0)),

@@ -6,7 +6,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 OUTPUT_DIR = PROJECT_ROOT / "build"
 FAMILY = "Caya Code"
 POSTSCRIPT_FAMILY = "CayaCode"
-VERSION = "1.001"
+VERSION = "1.002"
 CASCADIA_FONT_NAME = "Cascadia Code"
 CASCADIA_FONT_FILE = "CascadiaCode.ttf"
 
